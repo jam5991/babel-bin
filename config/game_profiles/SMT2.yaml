@@ -1,0 +1,71 @@
+# ─────────────────────────────────────────────────────────────
+# BabelBin – Shin Megami Tensei II (SLPM-86924) Game Profile
+# ─────────────────────────────────────────────────────────────
+# Overrides default.yaml for SMT2 PS1-specific binary quirks.
+# NOTE: No public fan translation exists for the PS1 port.
+
+game:
+  title: "Shin Megami Tensei II"
+  serial: "SLPM_869.24"
+  region: NTSC-J
+  executable: "SLPM_869.24"
+
+# ── Known Pointer Table ──────────────────────────────────────
+# SMT2 PS1 uses scattered pointer references rather than a
+# single centralized table — Ghidra XREF tracing is critical.
+pointers:
+  table_offset: null              # Must be discovered via Ghidra analysis
+  table_entry_count: null         # Determined at runtime
+  base_address: 0x80010000        # Standard PS-X EXE RAM load address
+
+# ── Compression ──────────────────────────────────────────────
+# SMT2 PS1 is noted for complex/"spaghetti" code.
+# Compression routines must be located via entropy + emulation.
+compression:
+  algorithm: unknown              # Must be identified by the pipeline
+  decompress_routine: null        # Discovered via pattern matching
+  compress_routine: null          # Discovered via pattern matching
+  # Fallback LZSS params if auto-detection succeeds
+  window_size: 4096
+  lookahead_size: 18
+
+# ── Text Encoding ────────────────────────────────────────────
+text:
+  encoding: shift_jis
+  # SMT2 control codes (discovered via hex analysis)
+  control_codes:
+    newline: "\\x0A"
+    end_of_string: "\\x00"
+    wait_for_input: "\\x0B"
+    # Additional codes to be mapped during Phase 2 analysis
+  font_width: 16
+  font_height: 16
+
+# ── VWF Hook ─────────────────────────────────────────────────
+vwf:
+  # Must be located by disassembling the font rendering routine
+  hook_address: null              # Auto-detected or --vwf-hook override
+  width_table_cave: null          # Allocated from discovered code caves
+
+# ── Overrides ────────────────────────────────────────────────
+llm:
+  max_retries: 8
+  # SMT2 demon/character name glossary for translation consistency
+  glossary:
+    アレフ: "Aleph"
+    ヒロコ: "Hiroko"
+    ベス: "Beth"
+    ギメル: "Gimel"
+    ダレス: "Daleth"
+    ザイン: "Zayin"
+    ルシファー: "Lucifer"
+    サタン: "Satan"
+    YHVH: "YHVH"
+    メシア教: "Messianism"
+    ガイア教: "Gaians"
+    ヴァルハラ: "Valhalla"
+    センター: "Center"
+    マグネタイト: "Magnetite"
+    悪魔: "Demon"
+    仲魔: "Ally Demon"
+    合体: "Fusion"

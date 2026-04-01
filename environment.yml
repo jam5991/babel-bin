@@ -1,0 +1,28 @@
+name: babelbin
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Core runtime
+  - python=3.11
+  # Binary analysis
+  - capstone>=5.0
+  # Config & CLI
+  - pyyaml>=6.0
+  - python-dotenv>=1.0
+  - click>=8.1
+  # Encoding detection
+  - chardet>=5.0
+  # Build tools (for mkpsxiso)
+  - cmake>=3.20
+  - make
+  # Java runtime (for Ghidra headless)
+  - openjdk>=21
+  # pip-only packages
+  - pip
+  - pip:
+    - pycdlib>=1.14.0
+    - unicorn>=2.0
+    - openai>=1.0
+    - anthropic>=0.20
+    - rich>=13.0

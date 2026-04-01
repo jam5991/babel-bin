@@ -54,7 +54,7 @@ BabelBin/
 │
 ├── config/
 │   ├── default.yaml            # Default pipeline settings (LLM temp, retry limits)
-│   └── game_profiles/          # Heuristic tweaks for specific engines (e.g., DQ7.yaml)
+│   └── game_profiles/          # Heuristic tweaks for specific engines (e.g., SMT2.yaml)
 │
 ├── src/
 │   ├── __init__.py
@@ -109,9 +109,8 @@ BabelBin/
 
 ### Prerequisites
 
-  * Python 3.11 or higher
-  * Ghidra 11.0+ (Added to system PATH)
-  * `mkpsxiso` (Added to system PATH)
+  * [Conda](https://docs.conda.io/en/latest/) (Anaconda or Miniconda)
+  * [Ghidra 11.0+](https://ghidra-sre.org/) (installed via Homebrew or manually)
   * A valid OpenAI or Anthropic API key
 
 ### Setup
@@ -119,21 +118,48 @@ BabelBin/
 ```bash
 git clone https://github.com/yourusername/BabelBin.git
 cd BabelBin
-pip install -r requirements.txt
+
+# Create the conda environment (includes Python 3.11, Java 21+, and all dependencies)
+conda env create -f environment.yml
+conda activate babelbin
+```
+
+### Installing External Tools
+
+**Ghidra** (via Homebrew on macOS):
+
+```bash
+brew install ghidra
+```
+
+**mkpsxiso** (built from source — the binaries are placed inside the conda env):
+
+```bash
+git clone --recurse-submodules https://github.com/Lameguy64/mkpsxiso.git /tmp/mkpsxiso
+cd /tmp/mkpsxiso
+cmake --preset release
+cmake --build --preset release
+
+# Copy into your conda environment's bin (no sudo required)
+cp build/Release/mkpsxiso build/Release/dumpsxiso "$CONDA_PREFIX/bin/"
 ```
 
 ### Environment Variables
 
-Create a `.env` file in the root directory:
+Create a `.env` file in the root directory (see `.env.example`):
 
 ```ini
-LLM_API_KEY=your_api_key_here
+OPENAI_API_KEY=your_openai_api_key_here
+# Or, for Anthropic:
+# ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
 GHIDRA_HEADLESS_PATH=/path/to/ghidra/support/analyzeHeadless
 ```
 
 ### Basic CLI Usage
 
 ```bash
+conda activate babelbin
 python babelbin.py --input /path/to/game_JP.bin --output /path/to/game_EN.bin --model gpt-4o
 ```
 

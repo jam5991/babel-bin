@@ -1,0 +1,246 @@
+"""
+Phase 4a — LLM Translation Engine.
+
+Unified interface for calling OpenAI and Anthropic APIs to translate
+Japanese text strings with strict byte-length constraints.
+
+Supports batch translation with rate-limit-aware dispatch.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+class LLMProvider(Enum):
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+
+
+@dataclass
+class TranslationRequest:
+    """A single text string to be translated."""
+    source_text: str              # Original Japanese text
+    byte_limit: int               # Maximum byte length for the English output
+    context: list[str] = field(default_factory=list)  # Surrounding strings for context
+    glossary: dict[str, str] = field(default_factory=dict)  # Term → translation overrides
+    control_codes: list[str] = field(default_factory=list)  # Codes that must be preserved
+
+
+@dataclass
+class TranslationResult:
+    """Result of a single translation."""
+    source_text: str
+    translated_text: str
+    byte_count: int              # Byte length of the translated text
+    byte_limit: int              # The limit that was enforced
+    within_limit: bool           # True if byte_count <= byte_limit
+    tokens_used: int             # API tokens consumed
+    attempts: int                # Number of API calls required
+
+
+class TranslationEngine:
+    """
+    Unified LLM translation engine supporting OpenAI and Anthropic.
+
+    Applies byte-length constraints and re-prompts the model to abbreviate
+    if the translation exceeds the allowed size.
+    """
+
+    def __init__(
+        self,
+        provider: str = "openai",
+        model: str = "gpt-4o",
+        temperature: float = 0.3,
+        max_retries: int = 5,
+        rate_limit_delay: float = 0.5,
+        system_prompt: str = "",
+    ) -> None:
+        self._provider = LLMProvider(provider.lower())
+        self._model = model
+        self._temperature = temperature
+        self._max_retries = max_retries
+        self._rate_limit_delay = rate_limit_delay
+        self._system_prompt = system_prompt
+        self._total_tokens = 0
+
+        # Initialize API client
+        if self._provider == LLMProvider.OPENAI:
+            self._client = self._init_openai()
+        else:
+            self._client = self._init_anthropic()
+
+        logger.info(
+            "Translation engine ready: %s / %s (temp=%.1f, retries=%d)",
+            self._provider.value, self._model, self._temperature, self._max_retries,
+        )
+
+    def _init_openai(self):
+        """Initialize OpenAI client."""
+        import openai
+
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise EnvironmentError(
+                "OPENAI_API_KEY not set. Add it to your .env file."
+            )
+        return openai.OpenAI(api_key=api_key)
+
+    def _init_anthropic(self):
+        """Initialize Anthropic client."""
+        import anthropic
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise EnvironmentError(
+                "ANTHROPIC_API_KEY not set. Add it to your .env file."
+            )
+        return anthropic.Anthropic(api_key=api_key)
+
+    def translate(self, request: TranslationRequest) -> TranslationResult:
+        """
+        Translate a single text string with byte-length enforcement.
+
+        If the translation exceeds the byte limit, the engine re-prompts
+        the LLM with a correction asking for abbreviation, up to max_retries.
+        """
+        from src.llm.prompts import build_translation_prompt, build_retry_prompt
+
+        prompt = build_translation_prompt(request)
+        translated = ""
+        tokens_used = 0
+        attempts = 0
+
+        for attempt in range(1, self._max_retries + 1):
+            attempts = attempt
+
+            # Rate limiting
+            if attempt > 1:
+                time.sleep(self._rate_limit_delay)
+
+            # Call API
+            response_text, tokens = self._call_api(prompt)
+            tokens_used += tokens
+
+            # Clean up the response
+            translated = response_text.strip()
+
+            # Check byte length
+            byte_count = len(translated.encode("ascii", errors="replace"))
+
+            if byte_count <= request.byte_limit:
+                logger.debug(
+                    "Translation OK (attempt %d): %d/%d bytes",
+                    attempt, byte_count, request.byte_limit,
+                )
+                break
+            else:
+                logger.debug(
+                    "Translation too long (attempt %d): %d/%d bytes — retrying",
+                    attempt, byte_count, request.byte_limit,
+                )
+                # Build a correction prompt
+                prompt = build_retry_prompt(
+                    request, translated, byte_count,
+                )
+
+        byte_count = len(translated.encode("ascii", errors="replace"))
+        self._total_tokens += tokens_used
+
+        return TranslationResult(
+            source_text=request.source_text,
+            translated_text=translated,
+            byte_count=byte_count,
+            byte_limit=request.byte_limit,
+            within_limit=byte_count <= request.byte_limit,
+            tokens_used=tokens_used,
+            attempts=attempts,
+        )
+
+    def translate_batch(
+        self,
+        requests: list[TranslationRequest],
+        batch_size: int = 20,
+    ) -> list[TranslationResult]:
+        """
+        Translate a batch of strings sequentially with progress logging.
+
+        Args:
+            requests: List of TranslationRequest objects.
+            batch_size: Number of strings to process before logging progress.
+
+        Returns:
+            List of TranslationResult objects in the same order.
+        """
+        results: list[TranslationResult] = []
+        total = len(requests)
+
+        for i, request in enumerate(requests):
+            result = self.translate(request)
+            results.append(result)
+
+            if (i + 1) % batch_size == 0 or i == total - 1:
+                success_count = sum(1 for r in results if r.within_limit)
+                logger.info(
+                    "Progress: %d/%d translated (%d within byte limits, %d tokens used)",
+                    i + 1, total, success_count, self._total_tokens,
+                )
+
+        return results
+
+    def _call_api(self, messages: list[dict]) -> tuple[str, int]:
+        """
+        Make a single API call and return (response_text, tokens_used).
+        """
+        if self._provider == LLMProvider.OPENAI:
+            return self._call_openai(messages)
+        else:
+            return self._call_anthropic(messages)
+
+    def _call_openai(self, messages: list[dict]) -> tuple[str, int]:
+        """Call OpenAI API."""
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            temperature=self._temperature,
+            max_tokens=512,
+        )
+
+        text = response.choices[0].message.content or ""
+        tokens = response.usage.total_tokens if response.usage else 0
+        return text, tokens
+
+    def _call_anthropic(self, messages: list[dict]) -> tuple[str, int]:
+        """Call Anthropic API."""
+        # Extract system message
+        system_msg = ""
+        user_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_msg = msg["content"]
+            else:
+                user_messages.append(msg)
+
+        response = self._client.messages.create(
+            model=self._model,
+            system=system_msg,
+            messages=user_messages,
+            temperature=self._temperature,
+            max_tokens=512,
+        )
+
+        text = response.content[0].text if response.content else ""
+        tokens = (response.usage.input_tokens + response.usage.output_tokens) if response.usage else 0
+        return text, tokens
+
+    @property
+    def total_tokens(self) -> int:
+        """Total tokens consumed across all API calls."""
+        return self._total_tokens

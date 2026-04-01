@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────
+# BabelBin – Default Pipeline Configuration
+# ─────────────────────────────────────────────────────────────
+
+# ── LLM Translation Settings ────────────────────────────────
+llm:
+  provider: openai          # "openai" or "anthropic"
+  model: gpt-4o
+  temperature: 0.3          # Low temp for deterministic translations
+  max_retries: 5            # Byte-constraint retry ceiling
+  batch_size: 20            # Strings per API batch
+  rate_limit_delay: 0.5     # Seconds between API calls
+
+# ── Entropy & Text Detection ────────────────────────────────
+entropy:
+  window_size: 256          # Sliding window in bytes
+  step_size: 64             # Step between windows
+  compressed_threshold: 7.0 # Shannon entropy above this → compressed/encrypted
+  structured_threshold: 4.0 # Above this but below compressed → structured data
+  plaintext_threshold: 4.0  # Below this → likely plaintext
+
+# ── Shift-JIS Cluster Detection ─────────────────────────────
+text_detection:
+  min_cluster_size: 8       # Minimum consecutive Shift-JIS bytes to flag
+  chardet_confidence: 0.7   # Minimum chardet confidence to accept
+  encodings:
+    - shift_jis
+    - cp932                 # Windows-31J (superset of Shift-JIS)
+
+# ── Binary Analysis (Ghidra) ────────────────────────────────
+ghidra:
+  timeout: 300              # Seconds before killing headless analysis
+  project_name: BabelBin_Analysis
+  auto_analysis: true       # Run Ghidra auto-analysis before scripts
+
+# ── CPU Emulation (Unicorn) ─────────────────────────────────
+emulation:
+  max_instructions: 1000000 # Instruction limit per emulated call
+  stack_address: 0x801FFF00 # PS1 stack pointer
+  ram_base: 0x80000000      # KSEG0 base
+  ram_size: 0x200000        # 2MB PS1 RAM
+
+# ── Code Cave & Patching ────────────────────────────────────
+patching:
+  min_cave_size: 64         # Minimum bytes of dead space to qualify as a cave
+  null_byte: 0x00           # Byte value that indicates unused space
+  exe_header_size: 2048     # PS-X EXE header (always 2048 bytes)
+  pointer_alignment: 4      # MIPS requires 4-byte aligned pointers
+
+# ── Workspace ────────────────────────────────────────────────
+workspace:
+  root: workspace
+  extracted: workspace/1_extracted
+  analysis: workspace/2_analysis
+  translated: workspace/3_translated
+  patched: workspace/4_patched
