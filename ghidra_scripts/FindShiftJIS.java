@@ -8,7 +8,6 @@ import java.util.Map;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import ghidra.app.script.GhidraScript;
-import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
@@ -36,7 +35,7 @@ public class FindShiftJIS extends GhidraScript {
             if (!block.isInitialized() || !block.isExecute() && !block.isRead()) {
                 continue;
             }
-            
+
             println("Scanning block: " + block.getName());
 
             Address start = block.getStart();
@@ -75,12 +74,14 @@ public class FindShiftJIS extends GhidraScript {
                                 }
                             } else if (b1 >= 0x20 && b1 <= 0x7E) {
                                 length++;
-                                decodedPreview.append((char)b1);
+                                decodedPreview.append((char) b1);
                                 current = current.add(1);
                             } else if (b1 == 0x0A || b1 == 0x0D || b1 == 0x00) {
                                 length++;
-                                if (b1 == 0x0A) decodedPreview.append("↵");
-                                if (b1 == 0x00) decodedPreview.append("∅");
+                                if (b1 == 0x0A)
+                                    decodedPreview.append("↵");
+                                if (b1 == 0x00)
+                                    decodedPreview.append("∅");
                                 current = current.add(1);
                                 if (b1 == 0x00) {
                                     break;
@@ -92,7 +93,7 @@ public class FindShiftJIS extends GhidraScript {
 
                         if (length >= 8) {
                             Map<String, Object> entry = new HashMap<>();
-                            
+
                             // File offsets in PSX
                             // Assumes base address is 0x80010000 and Header is 2048
                             long fileOffset = clusterStart.getOffset() - 0x80010000L + 2048;
@@ -130,7 +131,7 @@ public class FindShiftJIS extends GhidraScript {
 
     private String decodeSJIS(byte b1, byte b2) {
         try {
-            return new String(new byte[]{b1, b2}, "Shift_JIS");
+            return new String(new byte[] { b1, b2 }, "Shift_JIS");
         } catch (Exception e) {
             return "?";
         }

@@ -15,7 +15,6 @@ import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceIterator;
-import ghidra.program.model.symbol.Symbol;
 
 public class TracePointers extends GhidraScript {
 
