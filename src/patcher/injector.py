@@ -86,7 +86,7 @@ class Injector:
         # Look for table entries pointing to the old address
         for entry in pointer_map.pointer_entries:
             if entry.target_address == old_target:
-                if entry.instruction_type == "direct":
+                if entry.instruction_type in ("direct", "data_pointer"):
                     write_direct_pointer(self.data, entry.file_offset, new_target)
                     updates_made += 1
                 elif entry.instruction_type in ("lui_addiu", "lui_ori"):

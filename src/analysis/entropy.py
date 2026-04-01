@@ -18,8 +18,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-import chardet
-
 logger = logging.getLogger(__name__)
 
 
@@ -140,19 +138,17 @@ def _is_sjis_trail_byte(b: int) -> bool:
 def find_sjis_clusters(
     data: bytes,
     min_cluster_size: int = 8,
-    chardet_confidence: float = 0.7,
 ) -> list[TextRegion]:
     """
     Scan binary data for clusters of valid Shift-JIS encoded text.
 
     Uses a two-pass approach:
         1. Heuristic scan for consecutive valid Shift-JIS byte pairs
-        2. chardet validation to confirm encoding and measure confidence
+        2. Strict cp932 C-codec validation to confirm encoding
 
     Args:
         data: Raw binary data to scan.
         min_cluster_size: Minimum consecutive Shift-JIS bytes to flag.
-        chardet_confidence: Minimum chardet confidence to accept.
 
     Returns:
         List of TextRegion objects with decoded previews.
@@ -193,38 +189,30 @@ def find_sjis_clusters(
 
         cluster_len = i - cluster_start
 
+        # Prevent infinite loop if an orphaned lead byte stalled the pointer
+        if cluster_len == 0:
+            i += 1
+            continue
+
         if cluster_len < min_cluster_size or valid_chars < 3:
             continue
 
-        # Validate with chardet
+        # Validate with strict C-codec decoding
         chunk = data[cluster_start:cluster_start + cluster_len]
-        detection = chardet.detect(chunk)
-
-        encoding = detection.get("encoding", "")
-        confidence = detection.get("confidence", 0.0)
-
-        # Accept Shift-JIS or CP932 (Windows-31J, a superset)
-        is_japanese = encoding and encoding.lower() in (
-            "shift_jis", "shift-jis", "cp932", "windows-31j",
-            "euc-jp", "iso-2022-jp",
-        )
-
-        if is_japanese and confidence >= chardet_confidence:
-            # Decode a preview
-            try:
-                codec = "cp932" if "932" in (encoding or "") else "shift_jis"
-                decoded = chunk.decode(codec, errors="replace")
-                preview = decoded[:60].replace("\n", "↵").replace("\x00", "∅")
-            except (UnicodeDecodeError, LookupError):
-                preview = f"<{cluster_len} bytes, decode failed>"
-
+        try:
+            decoded = chunk.decode("cp932", errors="strict")
+            preview = decoded[:60].replace("\n", "↵").replace("\x00", "∅")
+            
             clusters.append(TextRegion(
                 offset=cluster_start,
                 length=cluster_len,
-                encoding=encoding or "shift_jis",
-                confidence=confidence,
+                encoding="cp932",
+                confidence=1.0,
                 decoded_preview=preview,
             ))
+        except UnicodeDecodeError:
+            # Not valid Shift-JIS, skip it
+            pass
 
     logger.info("Found %d Shift-JIS text clusters", len(clusters))
     return clusters
@@ -237,7 +225,6 @@ def analyze_binary(
     compressed_threshold: float = 7.0,
     structured_threshold: float = 4.0,
     min_cluster_size: int = 8,
-    chardet_confidence: float = 0.7,
 ) -> tuple[list[EntropyRegion], list[TextRegion]]:
     """
     Full binary analysis: entropy scan + Shift-JIS text detection.
@@ -250,7 +237,7 @@ def analyze_binary(
         compressed_threshold, structured_threshold,
     )
     text_clusters = find_sjis_clusters(
-        data, min_cluster_size, chardet_confidence,
+        data, min_cluster_size,
     )
 
     return entropy_regions, text_clusters

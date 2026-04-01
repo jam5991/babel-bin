@@ -137,8 +137,21 @@ def run_ghidra_analysis(
     if not auto_analysis:
         cmd.append("-noanalysis")
 
-    # Set processor to MIPS R3000 little-endian
-    cmd.extend(["-processor", "MIPS:LE:32:default"])
+    # We must treat this as a Raw Binary image because Ghidra's PSX Loader 
+    # would incorrectly strip the 2048-byte header and break FindShiftJIS's assumptions.
+    # To map the RAW image correctly, we supply the `-baseAddr` via `-loader-args` (used in Ghidra 10+ instead of -csaddr).
+    import struct
+    with open(binary_path, "rb") as f:
+        f.seek(0x18)
+        ram_dest = struct.unpack("<I", f.read(4))[0]
+        
+    base_addr_hex = f"0x{ram_dest - 2048:08X}"
+    
+    cmd.extend([
+        "-processor", "MIPS:LE:32:default",
+        "-loader", "BinaryLoader",
+        "-loader-baseAddr", base_addr_hex
+    ])
 
     logger.info("Starting Ghidra headless analysis (timeout: %ds)...", timeout)
     logger.debug("Command: %s", " ".join(cmd))
@@ -179,9 +192,9 @@ def _parse_ghidra_output(output_dir: Path) -> PointerMap:
             raw = json.loads(text_refs_file.read_text(encoding="utf-8"))
             for entry in raw:
                 pointer_map.text_refs.append(TextReference(
-                    offset=entry.get("offset", 0),
-                    ram_address=entry.get("ram_address", 0),
-                    length=entry.get("length", 0),
+                    offset=int(entry.get("offset", 0)),
+                    ram_address=int(entry.get("ram_address", 0)),
+                    length=int(entry.get("length", 0)),
                     decoded_text=entry.get("decoded_text", ""),
                     xrefs=entry.get("xrefs", []),
                 ))
@@ -202,10 +215,10 @@ def _parse_ghidra_output(output_dir: Path) -> PointerMap:
 
             for entry in raw.get("pointers", []):
                 pointer_map.pointer_entries.append(PointerEntry(
-                    pointer_address=entry.get("pointer_address", 0),
-                    target_address=entry.get("target_address", 0),
+                    pointer_address=int(entry.get("pointer_address", 0)),
+                    target_address=int(entry.get("target_address", 0)),
                     instruction_type=entry.get("instruction_type", "unknown"),
-                    file_offset=entry.get("file_offset", 0),
+                    file_offset=int(entry.get("file_offset", 0)),
                 ))
             logger.info("Loaded %d pointer entries from Ghidra", len(pointer_map.pointer_entries))
         except (json.JSONDecodeError, KeyError) as e:

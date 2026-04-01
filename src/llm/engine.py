@@ -70,6 +70,9 @@ class TranslationEngine:
         self._rate_limit_delay = rate_limit_delay
         self._system_prompt = system_prompt
         self._total_tokens = 0
+        
+        import threading
+        self._token_lock = threading.Lock()
 
         # Initialize API client
         if self._provider == LLMProvider.OPENAI:
@@ -152,7 +155,9 @@ class TranslationEngine:
                 )
 
         byte_count = len(translated.encode("ascii", errors="replace"))
-        self._total_tokens += tokens_used
+        
+        with self._token_lock:
+            self._total_tokens += tokens_used
 
         return TranslationResult(
             source_text=request.source_text,
@@ -168,31 +173,50 @@ class TranslationEngine:
         self,
         requests: list[TranslationRequest],
         batch_size: int = 20,
+        max_workers: int = 20,
     ) -> list[TranslationResult]:
         """
-        Translate a batch of strings sequentially with progress logging.
+        Translate a batch of strings concurrently with progress logging.
 
         Args:
             requests: List of TranslationRequest objects.
             batch_size: Number of strings to process before logging progress.
+            max_workers: Number of concurrent threads to dispatch to LLM APIs.
 
         Returns:
             List of TranslationResult objects in the same order.
         """
-        results: list[TranslationResult] = []
+        import concurrent.futures
+        
+        results: list[TranslationResult] = [None] * len(requests)
         total = len(requests)
+        completed = 0
 
-        for i, request in enumerate(requests):
-            result = self.translate(request)
-            results.append(result)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Map futures to their original index to preserve sequential output map
+            future_to_index = {
+                executor.submit(self.translate, req): i for i, req in enumerate(requests)
+            }
+            
+            for future in concurrent.futures.as_completed(future_to_index):
+                idx = future_to_index[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:
+                    logger.error("Error translating string index %d: %s", idx, e)
+                
+                completed += 1
+                if completed % batch_size == 0 or completed == total:
+                    # Thread-safe read count
+                    with self._token_lock:
+                        current_tokens = self._total_tokens
+                    success_count = sum(1 for r in results if r is not None and r.within_limit)
+                    logger.info(
+                        "Progress: %d/%d translated (%d within byte limits, %d tokens used)",
+                        completed, total, success_count, current_tokens,
+                    )
 
-            if (i + 1) % batch_size == 0 or i == total - 1:
-                success_count = sum(1 for r in results if r.within_limit)
-                logger.info(
-                    "Progress: %d/%d translated (%d within byte limits, %d tokens used)",
-                    i + 1, total, success_count, self._total_tokens,
-                )
-
+        # Build list containing the final outputs in perfectly aligned payload order
         return results
 
     def _call_api(self, messages: list[dict]) -> tuple[str, int]:

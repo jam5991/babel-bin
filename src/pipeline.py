@@ -122,28 +122,46 @@ class Pipeline:
             requests.append(req)
             
         logger.info("Translating %d strings...", len(requests))
-        # Uncomment in live run:
-        # results = engine.translate_batch(requests)
-        results = [] # placeholder
         
-        # Mock translations for demonstration/dry-run path
+        import json
+        import dataclasses
+        from src.llm.engine import TranslationResult
+        
+        cache_path = self.dirs["translate"] / "translations.json"
+        results = []
+        
+        if cache_path.exists():
+            logger.info("Loading cached translations from %s", cache_path)
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cached_data = json.load(f)
+                for item in cached_data:
+                    results.append(TranslationResult(**item))
+        else:
+            logger.info("No cache found. Calling live LLM API...")
+            results = engine.translate_batch(requests)
+            
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump([dataclasses.asdict(r) for r in results], f, ensure_ascii=False, indent=2)
+            logger.info("Saved %d translations to cache.", len(results))
+        
         translated_payloads = []
-        for ref in pointer_map.text_refs:
-            eng_str = f"Translated: {ref.decoded_text[:10]}"
+        for ref, result in zip(pointer_map.text_refs, results):
+            eng_str = result.translated_text if result.translated_text else f"Translated: {ref.decoded_text[:10]}"
             eng_bytes = eng_str.encode("ascii", errors="replace") + b"\x00"
             translated_payloads.append((ref.ram_address, eng_bytes, ref.length))
 
         # --- PHASE 5: PATCH & REALLOCATE ----------------------------
         logger.info("\n=== PHASE 5: CODE CAVE INJECTION ===")
         
+        # Instantiate a mutable payload map so EOF expansion can dynamically patch the headers
+        patched_data = bytearray(exe_data)
+        
         memory_map = MemoryMap(
             exe, 
-            exe_data, 
+            patched_data, 
             min_cave_size=self.config["patching"]["min_cave_size"]
         )
         
-        # Copy original executable for patching
-        patched_data = bytearray(exe_data)
         injector = Injector(exe, patched_data, memory_map)
         
         injector.inject_text(translated_payloads, pointer_map, force_caves)

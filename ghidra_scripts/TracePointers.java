@@ -68,9 +68,6 @@ public class TracePointers extends GhidraScript {
                     pointerEntry.put("file_offset", fileOffset);
 
                     if (mnemonic.equals("addiu") || mnemonic.equals("ori")) {
-                        // Likely the second half of a lui/addiu pair
-                        // Needs more complex analysis in a full implementation to find the lui.
-                        // Here we just mark it.
                         Instruction prev = insn.getPrevious();
                         if (prev != null && prev.getMnemonicString().equals("lui")) {
                             pointerEntry.put("instruction_type", "lui_" + mnemonic);
@@ -84,6 +81,37 @@ public class TracePointers extends GhidraScript {
                         pointerEntry.put("instruction_type", "unknown");
                     }
                     pointerEntries.add(pointerEntry);
+                }
+            }
+
+            // Secondary Pass: Brute-force search for 32-bit static data pointers (Little Endian)
+            // Ghidra's auto-analyzer routinely misses arrays of unstructured pointers in `.rodata`.
+            byte[] targetBytes = new byte[] {
+                (byte) (ramAddrLong & 0xFF),
+                (byte) ((ramAddrLong >> 8) & 0xFF),
+                (byte) ((ramAddrLong >> 16) & 0xFF),
+                (byte) ((ramAddrLong >> 24) & 0xFF)
+            };
+
+            Address searchAddr = program.getMinAddress();
+            while (searchAddr != null && searchAddr.compareTo(program.getMaxAddress()) < 0) {
+                searchAddr = program.getMemory().findBytes(searchAddr, targetBytes, null, true, monitor);
+                if (searchAddr != null) {
+                    // Check if we already found this via auto-analysis to avoid duplicates
+                    if (!xrefs.contains(searchAddr.getOffset())) {
+                        xrefs.add(searchAddr.getOffset());
+
+                        Map<String, Object> pointerEntry = new HashMap<>();
+                        pointerEntry.put("pointer_address", searchAddr.getOffset());
+                        pointerEntry.put("target_address", ramAddrLong);
+                        
+                        long fileOffset = searchAddr.getOffset() - 0x80010000L + 2048;
+                        pointerEntry.put("file_offset", fileOffset);
+                        pointerEntry.put("instruction_type", "data_pointer");
+
+                        pointerEntries.add(pointerEntry);
+                    }
+                    searchAddr = searchAddr.add(4); // Advance past this pointer
                 }
             }
             textRef.put("xrefs", xrefs);

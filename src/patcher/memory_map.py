@@ -40,55 +40,46 @@ class MemoryMap:
 
     def __init__(self, exe: PSXExecutable, data: bytes, min_cave_size: int = 64):
         """
-        Initialize the memory map by scanning the executable for caves.
+        Initialize the memory map by appending a dedicated 256KB code cave to the EOF.
 
         Args:
             exe: Parsed PS-X EXE header.
-            data: Raw executable bytes.
-            min_cave_size: Minimum contiguous bytes to consider it a usable cave.
+            data: Raw executable bytearray (modified in-place).
+            min_cave_size: (Legacy parameter, unused).
         """
         self.exe = exe
         self.min_cave_size = min_cave_size
-        self.caves: list[Cave] = self._scan_caves(data)
         
-        total_free = sum(c.size for c in self.caves)
+        # We physically extend the binary by 256KB to securely house all translation
+        # injections and VWF payloads safely without corrupting .bss / .data arrays.
+        extension_size = 256 * 1024  
+        
+        import struct
+        # 1. Update the PS-X Header t_size (Text Size) at offset 0x1C
+        #    This genuinely guarantees the PlayStation Kernel Exec() syscall naturally loads
+        #    the entirety of our newly appended payload block successfully into console RAM!
+        orig_t_size = struct.unpack_from("<I", data, 0x1C)[0]
+        new_t_size = orig_t_size + extension_size
+        struct.pack_into("<I", data, 0x1C, new_t_size)
+        
+        # 2. Append the block to the raw bytearray
+        orig_file_len = len(data)
+        data.extend(b"\x00" * extension_size)
+        
+        # 3. Create a single master Cave strictly binding to the appended block securely.
+        #    ram_dest is the RAM address of offset 2048 naturally.
+        code_cave_ram_address = exe.ram_dest + (orig_file_len - 2048)
+        
+        self.caves = [Cave(
+            file_offset=orig_file_len,
+            ram_address=code_cave_ram_address,
+            size=extension_size,
+        )]
+        
         logger.info(
-            "MemoryMap initialized: discovered %d code caves (total: %d bytes / %.1f KB)",
-            len(self.caves), total_free, total_free / 1024,
+            "MemoryMap initialized: Appended dedicated 256KB code cave at EOF (RAM: 0x%08X). Original t_size expanded from %d to %d bytes.",
+            code_cave_ram_address, orig_t_size, new_t_size
         )
-
-    def _scan_caves(self, data: bytes) -> list[Cave]:
-        """Scan the executable for blocks of CAVE_BYTE."""
-        caves = []
-        data_len = len(data)
-        
-        # Start immediately after the 2048-byte header
-        header_size = 2048
-        i = header_size
-
-        while i < data_len:
-            if data[i] == CAVE_BYTE:
-                start = i
-                # Count consecutive cave bytes
-                while i < data_len and data[i] == CAVE_BYTE:
-                    i += 1
-                
-                size = i - start
-                
-                if size >= self.min_cave_size:
-                    # Found a valid cave
-                    offset_from_code_start = start - header_size
-                    ram_address = self.exe.ram_dest + offset_from_code_start
-                    
-                    caves.append(Cave(
-                        file_offset=start,
-                        ram_address=ram_address,
-                        size=size,
-                    ))
-            else:
-                i += 1
-
-        return caves
 
     def allocate(self, size: int, alignment: int = 4) -> int | None:
         """
