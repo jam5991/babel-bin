@@ -17,6 +17,9 @@ pointers:
   table_offset: null              # Must be discovered via Ghidra analysis
   table_entry_count: null         # Determined at runtime
   base_address: 0x80010000        # Standard PS-X EXE RAM load address
+  exclude_code_region: true       # Skip XREF matches inside disassembled code
+  require_aligned: true           # Only accept 4-byte aligned data pointers
+  require_neighbor: true          # Require adjacent pointer-like values
 
 # ── Compression ──────────────────────────────────────────────
 # SMT2 PS1 is noted for complex/"spaghetti" code.
@@ -32,6 +35,7 @@ compression:
 # ── Text Encoding ────────────────────────────────────────────
 text:
   encoding: shift_jis
+  output_encoding: fullwidth_sjis   # English text → fullwidth Shift-JIS glyphs
   # SMT2 control codes (discovered via hex analysis)
   control_codes:
     newline: "\\x0A"

@@ -26,6 +26,7 @@ from src.emu.decompress import find_compression_routines
 from src.llm.engine import TranslationEngine, TranslationRequest
 from src.patcher.memory_map import MemoryMap
 from src.patcher.injector import Injector
+from src.patcher.fullwidth_sjis import ascii_to_fullwidth_sjis, fullwidth_char_budget
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +115,13 @@ class Pipeline:
         # Format strings for translation
         requests = []
         for text_ref in pointer_map.text_refs:
+            # The game uses fullwidth Shift-JIS (2 bytes per character).
+            # Tell the LLM the *character* budget, not raw byte limit.
+            raw_byte_limit = text_ref.length if not force_caves else 1024
+            char_budget = fullwidth_char_budget(raw_byte_limit)
             req = TranslationRequest(
                 source_text=text_ref.decoded_text,
-                byte_limit=text_ref.length if not force_caves else 1024,
+                byte_limit=char_budget,
                 glossary=self.config["llm"].get("glossary", {})
             )
             requests.append(req)
@@ -146,8 +151,13 @@ class Pipeline:
         
         translated_payloads = []
         for ref, result in zip(pointer_map.text_refs, results):
+            if result is None:
+                logger.warning("Skipping untranslated string at 0x%08X", ref.ram_address)
+                continue
             eng_str = result.translated_text if result.translated_text else f"Translated: {ref.decoded_text[:10]}"
-            eng_bytes = eng_str.encode("ascii", errors="replace") + b"\x00"
+            # Encode as fullwidth Shift-JIS — the game's font table expects
+            # 2-byte fullwidth glyphs, NOT raw ASCII.
+            eng_bytes = ascii_to_fullwidth_sjis(eng_str) + b"\x00"
             translated_payloads.append((ref.ram_address, eng_bytes, ref.length))
 
         # --- PHASE 5: PATCH & REALLOCATE ----------------------------

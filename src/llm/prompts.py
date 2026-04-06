@@ -22,9 +22,10 @@ and menu text for a PlayStation 1 game.
 
 CRITICAL RULES — violating any of these will corrupt the game binary:
 
-1. BYTE LIMIT: Your English translation MUST NOT exceed the specified byte limit. \
-Count each ASCII character as 1 byte. If your translation is too long, abbreviate \
-naturally. Use contractions, shorter synonyms, or restructure the sentence. \
+1. CHARACTER LIMIT: Your English translation MUST NOT exceed the specified \
+character limit. The game uses fullwidth encoding where EACH character costs \
+2 bytes in the binary. This means space is VERY tight — be aggressive about \
+abbreviating. Use contractions, shorter synonyms, or restructure the sentence. \
 NEVER pad or truncate mid-word.
 
 2. CONTROL CODES: The source text may contain special byte sequences (control codes) \

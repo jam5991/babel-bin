@@ -86,6 +86,15 @@ public class TracePointers extends GhidraScript {
 
             // Secondary Pass: Brute-force search for 32-bit static data pointers (Little Endian)
             // Ghidra's auto-analyzer routinely misses arrays of unstructured pointers in `.rodata`.
+            //
+            // FILTER RULES — Overly aggressive matching here caused false positives
+            // that corrupted the "new game" init path:
+            //   1. Data pointers in MIPS are always 4-byte aligned.
+            //   2. If Ghidra disassembled an instruction at the match address, it's
+            //      an operand (e.g. lui/addiu immediate), not a data pointer — skip.
+            //   3. Isolated matches surrounded by non-pointer data are likely coincidental
+            //      byte patterns — require at least one neighboring pointer to confirm
+            //      this is a pointer table.
             byte[] targetBytes = new byte[] {
                 (byte) (ramAddrLong & 0xFF),
                 (byte) ((ramAddrLong >> 8) & 0xFF),
@@ -97,15 +106,61 @@ public class TracePointers extends GhidraScript {
             while (searchAddr != null && searchAddr.compareTo(program.getMaxAddress()) < 0) {
                 searchAddr = program.getMemory().findBytes(searchAddr, targetBytes, null, true, monitor);
                 if (searchAddr != null) {
+                    long matchOffset = searchAddr.getOffset();
+
+                    // --- Filter 1: 4-byte alignment ---
+                    if ((matchOffset & 0x3) != 0) {
+                        searchAddr = searchAddr.add(1);
+                        continue;
+                    }
+
+                    // --- Filter 2: Skip if inside disassembled code ---
+                    Instruction matchInsn = program.getListing().getInstructionContaining(searchAddr);
+                    if (matchInsn != null) {
+                        // This address is part of an instruction — the matching bytes
+                        // are operands (immediates), not a standalone data pointer.
+                        searchAddr = searchAddr.add(4);
+                        continue;
+                    }
+
+                    // --- Filter 3: Neighborhood validation ---
+                    // A real pointer table has multiple adjacent 0x80XXXXXX entries.
+                    // Check the 4 bytes before and after for plausible PS1 RAM addresses.
+                    boolean hasNeighbor = false;
+                    for (int delta = -4; delta <= 4; delta += 8) {
+                        try {
+                            Address neighborAddr = searchAddr.add(delta);
+                            if (neighborAddr.compareTo(program.getMinAddress()) >= 0 &&
+                                neighborAddr.compareTo(program.getMaxAddress()) < 0) {
+                                long neighborVal = (mem.getByte(neighborAddr) & 0xFFL)
+                                    | ((mem.getByte(neighborAddr.add(1)) & 0xFFL) << 8)
+                                    | ((mem.getByte(neighborAddr.add(2)) & 0xFFL) << 16)
+                                    | ((mem.getByte(neighborAddr.add(3)) & 0xFFL) << 24);
+                                // Plausible PS1 RAM pointer (KSEG0 range)
+                                if (neighborVal >= 0x80010000L && neighborVal < 0x80200000L) {
+                                    hasNeighbor = true;
+                                    break;
+                                }
+                            }
+                        } catch (Exception ignored) {
+                            // Out of bounds — skip this neighbor check
+                        }
+                    }
+
+                    if (!hasNeighbor) {
+                        searchAddr = searchAddr.add(4);
+                        continue;
+                    }
+
                     // Check if we already found this via auto-analysis to avoid duplicates
-                    if (!xrefs.contains(searchAddr.getOffset())) {
-                        xrefs.add(searchAddr.getOffset());
+                    if (!xrefs.contains(matchOffset)) {
+                        xrefs.add(matchOffset);
 
                         Map<String, Object> pointerEntry = new HashMap<>();
-                        pointerEntry.put("pointer_address", searchAddr.getOffset());
+                        pointerEntry.put("pointer_address", matchOffset);
                         pointerEntry.put("target_address", ramAddrLong);
                         
-                        long fileOffset = searchAddr.getOffset() - 0x80010000L + 2048;
+                        long fileOffset = matchOffset - 0x80010000L + 2048;
                         pointerEntry.put("file_offset", fileOffset);
                         pointerEntry.put("instruction_type", "data_pointer");
 

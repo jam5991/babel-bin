@@ -54,10 +54,19 @@ class Injector:
                 # Need to relocate completely
                 new_addr = self.memory_map.allocate(eng_len, alignment=1)
                 if new_addr is None:
-                    raise RuntimeError(f"Failed to allocate {eng_len} bytes for translated text")
-                    
-                target_offset = ram_to_file_offset(new_addr, self.exe)
-                logger.debug("Relocated text from 0x%08X to 0x%08X", orig_addr, new_addr)
+                    # No cave space available — truncate to fit in-place
+                    logger.warning(
+                        "No cave space for %d-byte string at 0x%08X "
+                        "(original %d bytes). Truncating to fit in-place.",
+                        eng_len, orig_addr, orig_length,
+                    )
+                    eng_bytes = eng_bytes[:orig_length - 1] + b"\x00"
+                    eng_len = len(eng_bytes)
+                    new_addr = orig_addr
+                    target_offset = ram_to_file_offset(orig_addr, self.exe)
+                else:
+                    target_offset = ram_to_file_offset(new_addr, self.exe)
+                    logger.debug("Relocated text from 0x%08X to 0x%08X", orig_addr, new_addr)
             else:
                 # It fits in the original location
                 target_offset = ram_to_file_offset(orig_addr, self.exe)
@@ -74,6 +83,11 @@ class Injector:
             if new_addr != orig_addr:
                 self._update_pointers(orig_addr, new_addr, pointer_map)
 
+    # Known-safe instruction types that we can confidently patch
+    _SAFE_INSTRUCTION_TYPES = frozenset({
+        "direct", "data_pointer", "lui_addiu", "lui_ori",
+    })
+
     def _update_pointers(
         self,
         old_target: int,
@@ -82,19 +96,35 @@ class Injector:
     ) -> None:
         """Find and update all pointers targeting this text."""
         updates_made = 0
+        skipped = 0
         
         # Look for table entries pointing to the old address
         for entry in pointer_map.pointer_entries:
             if entry.target_address == old_target:
+                # --- Safety: skip unrecognised instruction types ---
+                if entry.instruction_type not in self._SAFE_INSTRUCTION_TYPES:
+                    logger.warning(
+                        "Skipping pointer at 0x%08X — unrecognised instruction type '%s' "
+                        "(likely false positive from XREF scan)",
+                        entry.pointer_address, entry.instruction_type,
+                    )
+                    skipped += 1
+                    continue
+
+                # --- Safety: validate file offset bounds ---
+                if entry.file_offset < 0 or entry.file_offset >= len(self.data) - 3:
+                    logger.warning(
+                        "Skipping pointer at 0x%08X — file offset 0x%X is out of bounds "
+                        "(binary size: 0x%X)",
+                        entry.pointer_address, entry.file_offset, len(self.data),
+                    )
+                    skipped += 1
+                    continue
+
                 if entry.instruction_type in ("direct", "data_pointer"):
                     write_direct_pointer(self.data, entry.file_offset, new_target)
                     updates_made += 1
                 elif entry.instruction_type in ("lui_addiu", "lui_ori"):
-                    # We need the High instructions file offset, which we assume is entry.file_offset
-                    # and the low instruction offset. In a real scenario, Ghidra output would need
-                    # to specify both addresses. For this implementation, we assume they are adjacent
-                    # (offset + 4). 
-                    # This is a simplification for the pipeline's structure.
                     write_split_pointer(
                         self.data,
                         entry.file_offset,
@@ -107,7 +137,10 @@ class Injector:
         if updates_made == 0:
             logger.warning("Allocated text at 0x%08X (was 0x%08X), but found 0 pointers to update!", new_target, old_target)
         else:
-            logger.debug("Updated %d pointers for relocation 0x%08X -> 0x%08X", updates_made, old_target, new_target)
+            logger.debug(
+                "Updated %d pointers for relocation 0x%08X -> 0x%08X (skipped %d unsafe)",
+                updates_made, old_target, new_target, skipped,
+            )
 
     def inject_vwf_hook(self, vwf_bin_path: Path, target_hook_addr: int | None = None) -> None:
         """

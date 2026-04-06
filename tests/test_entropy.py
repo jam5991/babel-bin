@@ -28,14 +28,14 @@ def test_scan_entropy():
     assert regions[1].region_type.value == "compressed"
 
 def test_find_sjis_clusters():
-    # A natural sentence properly detected by Chardet
-    sjis_text = "これはテストです。Shift-JISのテキストを検出できるか確認しています。".encode("shift_jis") + b"\x00"
+    # A natural sentence properly detected by cp932 codec validation
+    sjis_text = "これはテストです。".encode("shift_jis") + b"\x00"
     
-    # Pad to make it big enough
-    padded_sjis = b"\xFF" * 10 + sjis_text * 3 + b"\xFF" * 10
+    # Pad with non-SJIS bytes to isolate clusters
+    padded_sjis = b"\xFF" * 10 + sjis_text + b"\xFF" * 10 + sjis_text + b"\xFF" * 10
     
-    clusters = find_sjis_clusters(padded_sjis, min_cluster_size=6, chardet_confidence=0.5)
+    clusters = find_sjis_clusters(padded_sjis, min_cluster_size=6)
     
-    assert len(clusters) == 3
+    assert len(clusters) == 2
     for cluster in clusters:
         assert cluster.decoded_preview.startswith("これは")

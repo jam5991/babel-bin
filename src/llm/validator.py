@@ -19,6 +19,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from src.patcher.fullwidth_sjis import ascii_to_fullwidth_sjis, fullwidth_byte_count, _FULLWIDTH_MAP, CONTROL_BYTES
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,8 +42,9 @@ class ValidationResult:
     byte_limit: int = 0
 
 
-# Default ASCII printable range + common control characters
-DEFAULT_VALID_CHARS = set(range(0x20, 0x7F)) | {0x00, 0x0A, 0x0D}
+# Default valid characters: anything the fullwidth encoder can map,
+# plus control characters that pass through as single bytes.
+DEFAULT_VALID_CHARS = set(_FULLWIDTH_MAP.keys()) | {chr(b) for b in CONTROL_BYTES}
 
 # Pattern to match control code markers like {CTRL:0A}, {NL}, {WAIT}, etc.
 CONTROL_CODE_PATTERN = re.compile(r"\{[A-Z_]+(?::[0-9A-Fa-f]+)?\}")
@@ -84,9 +87,10 @@ def validate_translation(
             byte_limit=byte_limit,
         )
 
-    # ── Check 2: Byte length ─────────────────────────────────
-    encoded = translated.encode("ascii", errors="replace")
-    byte_count = len(encoded)
+    # ── Check 2: Byte length (fullwidth Shift-JIS) ───────────
+    # Each printable character costs 2 bytes in fullwidth encoding;
+    # control codes cost 1 byte each.
+    byte_count = fullwidth_byte_count(translated)
 
     if byte_count > byte_limit:
         errors.append(ValidationError(
@@ -129,20 +133,22 @@ def validate_translation(
                 ))
 
     # ── Check 4: Invalid characters ──────────────────────────
-    invalid_bytes = []
-    for i, byte_val in enumerate(encoded):
-        if byte_val not in valid_char_set:
-            invalid_bytes.append((i, byte_val))
+    # Validate at the character level: each character must be
+    # mappable to fullwidth Shift-JIS or be a valid control byte.
+    invalid_chars = []
+    for i, ch in enumerate(translated):
+        if ch not in valid_char_set:
+            invalid_chars.append((i, ch))
 
-    if invalid_bytes:
-        # Show first 5 invalid bytes
+    if invalid_chars:
+        # Show first 5 invalid characters
         examples = ", ".join(
-            f"0x{b:02X} at position {pos}"
-            for pos, b in invalid_bytes[:5]
+            f"U+{ord(ch):04X} ('{ch}') at position {pos}"
+            for pos, ch in invalid_chars[:5]
         )
         errors.append(ValidationError(
             error_type="invalid_char",
-            message=f"Translation contains {len(invalid_bytes)} invalid byte(s): {examples}",
+            message=f"Translation contains {len(invalid_chars)} unmappable character(s): {examples}",
         ))
 
     # ── Check 5: Suspiciously short translation ──────────────

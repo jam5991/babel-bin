@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+from src.patcher.fullwidth_sjis import fullwidth_byte_count
+
 logger = logging.getLogger(__name__)
 
 
@@ -136,7 +138,7 @@ class TranslationEngine:
             translated = response_text.strip()
 
             # Check byte length
-            byte_count = len(translated.encode("ascii", errors="replace"))
+            byte_count = fullwidth_byte_count(translated)
 
             if byte_count <= request.byte_limit:
                 logger.debug(
@@ -154,7 +156,7 @@ class TranslationEngine:
                     request, translated, byte_count,
                 )
 
-        byte_count = len(translated.encode("ascii", errors="replace"))
+        byte_count = fullwidth_byte_count(translated)
         
         with self._token_lock:
             self._total_tokens += tokens_used
