@@ -13,6 +13,7 @@ import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Program;
+import ghidra.program.model.mem.Memory;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceIterator;
 
@@ -37,6 +38,7 @@ public class TracePointers extends GhidraScript {
         }
 
         Program program = currentProgram;
+        Memory mem = program.getMemory();
         List<Map<String, Object>> pointerEntries = new ArrayList<>();
 
         for (Map<String, Object> textRef : textRefs) {

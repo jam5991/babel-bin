@@ -54,13 +54,19 @@ class Injector:
                 # Need to relocate completely
                 new_addr = self.memory_map.allocate(eng_len, alignment=1)
                 if new_addr is None:
-                    # No cave space available — truncate to fit in-place
+                    # No cave space available — truncate to fit in-place.
+                    # Fullwidth Shift-JIS glyphs are 2 bytes each, so we must
+                    # cut on an even boundary to avoid corrupted half-glyphs.
                     logger.warning(
                         "No cave space for %d-byte string at 0x%08X "
                         "(original %d bytes). Truncating to fit in-place.",
                         eng_len, orig_addr, orig_length,
                     )
-                    eng_bytes = eng_bytes[:orig_length - 1] + b"\x00"
+                    # Reserve 1 byte for the null terminator, then round down
+                    # to the nearest even number so we don't split a 2-byte glyph.
+                    usable = orig_length - 1  # room for \x00
+                    usable = usable & ~1       # align down to even (2-byte boundary)
+                    eng_bytes = eng_bytes[:usable] + b"\x00"
                     eng_len = len(eng_bytes)
                     new_addr = orig_addr
                     target_offset = ram_to_file_offset(orig_addr, self.exe)

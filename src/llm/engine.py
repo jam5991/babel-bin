@@ -2,7 +2,12 @@
 Phase 4a — LLM Translation Engine.
 
 Unified interface for calling OpenAI and Anthropic APIs to translate
-Japanese text strings with strict byte-length constraints.
+Japanese text strings with strict character-count constraints.
+
+The game uses fullwidth Shift-JIS encoding where each printable character
+costs 2 bytes.  The `byte_limit` field in TranslationRequest stores a
+*character budget* (not raw bytes) so the LLM prompt can communicate it
+naturally.
 
 Supports batch translation with rate-limit-aware dispatch.
 """
@@ -16,9 +21,18 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
-from src.patcher.fullwidth_sjis import fullwidth_byte_count
+from src.patcher.fullwidth_sjis import fullwidth_byte_count, CONTROL_BYTES
 
 logger = logging.getLogger(__name__)
+
+
+def _printable_char_count(text: str) -> int:
+    """Count printable characters (each costs 2 bytes in fullwidth encoding).
+    
+    Control bytes (null, newline, etc.) don't count — they pass through
+    as 1-byte values and aren't constrained by the font table width.
+    """
+    return sum(1 for ch in text if ord(ch) not in CONTROL_BYTES)
 
 
 class LLMProvider(Enum):
@@ -30,7 +44,7 @@ class LLMProvider(Enum):
 class TranslationRequest:
     """A single text string to be translated."""
     source_text: str              # Original Japanese text
-    byte_limit: int               # Maximum byte length for the English output
+    byte_limit: int               # Maximum printable character count for the English output
     context: list[str] = field(default_factory=list)  # Surrounding strings for context
     glossary: dict[str, str] = field(default_factory=dict)  # Term → translation overrides
     control_codes: list[str] = field(default_factory=list)  # Codes that must be preserved
@@ -137,26 +151,27 @@ class TranslationEngine:
             # Clean up the response
             translated = response_text.strip()
 
-            # Check byte length
-            byte_count = fullwidth_byte_count(translated)
+            # Check character count against budget
+            char_count = _printable_char_count(translated)
 
-            if byte_count <= request.byte_limit:
+            if char_count <= request.byte_limit:
                 logger.debug(
-                    "Translation OK (attempt %d): %d/%d bytes",
-                    attempt, byte_count, request.byte_limit,
+                    "Translation OK (attempt %d): %d/%d chars",
+                    attempt, char_count, request.byte_limit,
                 )
                 break
             else:
                 logger.debug(
-                    "Translation too long (attempt %d): %d/%d bytes — retrying",
-                    attempt, byte_count, request.byte_limit,
+                    "Translation too long (attempt %d): %d/%d chars — retrying",
+                    attempt, char_count, request.byte_limit,
                 )
                 # Build a correction prompt
                 prompt = build_retry_prompt(
-                    request, translated, byte_count,
+                    request, translated, char_count,
                 )
 
         byte_count = fullwidth_byte_count(translated)
+        char_count = _printable_char_count(translated)
         
         with self._token_lock:
             self._total_tokens += tokens_used
@@ -166,7 +181,7 @@ class TranslationEngine:
             translated_text=translated,
             byte_count=byte_count,
             byte_limit=request.byte_limit,
-            within_limit=byte_count <= request.byte_limit,
+            within_limit=char_count <= request.byte_limit,
             tokens_used=tokens_used,
             attempts=attempts,
         )

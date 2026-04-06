@@ -135,19 +135,31 @@ class Pipeline:
         cache_path = self.dirs["translate"] / "translations.json"
         results = []
         
-        if cache_path.exists():
+        if cache_path.exists() and cache_path.stat().st_size > 0:
             logger.info("Loading cached translations from %s", cache_path)
-            with open(cache_path, "r", encoding="utf-8") as f:
-                cached_data = json.load(f)
-                for item in cached_data:
-                    results.append(TranslationResult(**item))
-        else:
+            try:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    cached_data = json.load(f)
+                    for item in cached_data:
+                        if item is None:
+                            results.append(None)
+                        else:
+                            results.append(TranslationResult(**item))
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning("Corrupt cache file (%s). Re-translating...", e)
+                results = []
+        
+        if not results:
             logger.info("No cache found. Calling live LLM API...")
             results = engine.translate_batch(requests)
             
             with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump([dataclasses.asdict(r) for r in results], f, ensure_ascii=False, indent=2)
-            logger.info("Saved %d translations to cache.", len(results))
+                json.dump(
+                    [dataclasses.asdict(r) if r is not None else None for r in results],
+                    f, ensure_ascii=False, indent=2,
+                )
+            ok_count = sum(1 for r in results if r is not None)
+            logger.info("Saved %d translations to cache (%d failed).", ok_count, len(results) - ok_count)
         
         translated_payloads = []
         for ref, result in zip(pointer_map.text_refs, results):
@@ -175,6 +187,10 @@ class Pipeline:
         injector = Injector(exe, patched_data, memory_map)
         
         injector.inject_text(translated_payloads, pointer_map, force_caves)
+        
+        # Log how many bytes were actually modified
+        changed_bytes = sum(1 for a, b in zip(exe_data, patched_data) if a != b)
+        logger.info("Injection modified %d bytes in the executable.", changed_bytes)
         
         # Write patched executable to workspace
         patched_exe_path = self.dirs["patch"] / exe.path.name

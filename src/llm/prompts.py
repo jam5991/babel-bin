@@ -23,15 +23,19 @@ and menu text for a PlayStation 1 game.
 CRITICAL RULES — violating any of these will corrupt the game binary:
 
 1. CHARACTER LIMIT: Your English translation MUST NOT exceed the specified \
-character limit. The game uses fullwidth encoding where EACH character costs \
-2 bytes in the binary. This means space is VERY tight — be aggressive about \
-abbreviating. Use contractions, shorter synonyms, or restructure the sentence. \
-NEVER pad or truncate mid-word.
+character limit. This is a HARD MAXIMUM measured in printable characters \
+(letters, digits, spaces, punctuation each count as 1). The game uses fullwidth \
+encoding where EACH printable character costs 2 bytes — the original Japanese \
+text also uses 2 bytes per character, so you have EXACTLY as many characters as \
+the original. Be aggressive: use abbreviations, contractions, shorter synonyms, \
+or restructure sentences. If the limit is 8, your translation must be 8 \
+characters or fewer INCLUDING spaces. NEVER exceed this — it will corrupt the ROM.
 
 2. CONTROL CODES: The source text may contain special byte sequences (control codes) \
 like newlines, wait-for-input markers, or color changes. These are marked with \
 {CTRL:XX} notation. You MUST preserve every control code EXACTLY as-is in your \
-translation, including their position relative to the text.
+translation, including their position relative to the text. Control codes do NOT \
+count toward your character limit.
 
 3. GLOSSARY: When a glossary is provided, you MUST use the specified English terms \
 for character names, place names, items, and game-specific terminology. Do not \
@@ -76,7 +80,7 @@ def build_translation_prompt(request: TranslationRequest) -> list[dict]:
         parts.append(f"CONTROL CODES TO PRESERVE: {codes}")
 
     # The actual translation request
-    parts.append(f"BYTE LIMIT: {request.byte_limit} bytes maximum")
+    parts.append(f"CHARACTER LIMIT: {request.byte_limit} characters maximum (each character = 2 bytes in fullwidth encoding)")
     parts.append(f"SOURCE TEXT (Japanese):\n{request.source_text}")
     parts.append("TRANSLATION (English):")
 
@@ -111,16 +115,17 @@ which is {overshoot} byte(s) over the limit of {request.byte_limit} bytes.
 
 Previous translation: "{previous_translation}"
 
-Please provide a SHORTER translation that fits within {request.byte_limit} bytes. \
+Please provide a SHORTER translation that fits within {request.byte_limit} CHARACTERS. \
+Remember: each printable character (including spaces) counts as 1 toward the limit.
 Strategies:
 - Use contractions (do not → don't, cannot → can't)
-- Use shorter synonyms
+- Use shorter synonyms ("equipment" → "gear", "impossible" → "can't")
 - Restructure for brevity
-- Abbreviate where natural
+- Abbreviate where natural ("Level" → "Lv", "Hit Points" → "HP")
 
 Original Japanese: {request.source_text}
 
-CORRECTED TRANSLATION (≤ {request.byte_limit} bytes):"""
+CORRECTED TRANSLATION (≤ {request.byte_limit} characters):"""
 
     messages.append({"role": "user", "content": correction})
 

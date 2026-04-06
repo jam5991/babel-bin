@@ -65,20 +65,32 @@ def repack(
         str(layout_xml),
         "-o", str(output_bin),
         "-c", str(output_cue),
+        "-y",  # Auto-accept overwrite if output file already exists
     ]
 
     logger.info("Running: %s", " ".join(cmd))
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-
-    if result.returncode != 0:
+    # Use Popen + communicate() instead of subprocess.run with capture_output
+    # to avoid pipe buffer deadlock when mkpsxiso writes extensive file listings.
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        stdout, stderr = proc.communicate(timeout=600)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
         raise RuntimeError(
-            f"mkpsxiso failed (exit {result.returncode}):\n{result.stderr}"
+            f"mkpsxiso timed out after 600 seconds. "
+            "The ISO image may be too large or mkpsxiso is stuck."
+        )
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"mkpsxiso failed (exit {proc.returncode}):\n{stderr}"
         )
 
     # Validate output
